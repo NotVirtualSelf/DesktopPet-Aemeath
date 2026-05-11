@@ -25,6 +25,7 @@
 #include <QGuiApplication>
 #include <QNetworkRequest>
 #include <QHttpMultiPart>
+#include <QBuffer>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -32,6 +33,8 @@
 
 constexpr int WINDOW_WIDTH = 260;
 constexpr int WINDOW_HEIGHT = 227;
+
+const char* OCR_apiKey = "sk-5d5608f668ad455bb1d2d1f32c9a51c5";
 
 DesktopPet::DesktopPet(QWidget* parent)
     : QWidget(parent),
@@ -287,7 +290,7 @@ void DesktopPet::dance() {
 
 void DesktopPet::mouseDoubleClickEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton && m_targetProcessRunning) {
-        processScreenshot();
+        this->processScreenshot();
     }
     QWidget::mouseDoubleClickEvent(event);
 }
@@ -331,8 +334,8 @@ void DesktopPet::processScreenshot() {
 #endif
     
     QPixmap originalPixmap = screen->grabWindow(windowId);
-    QString fileName = QDir::currentPath() + "/screenshot_temp.png";
-    originalPixmap.save(fileName, "PNG");
+    QString fileName = QDir::currentPath() + "/screenshot_temp.jpg";
+    originalPixmap.save(fileName, "JPG", 80);
     
     // 1. Run YOLO placeholder
     QProcess* yoloProcess = new QProcess(this);
@@ -347,41 +350,75 @@ void DesktopPet::processScreenshot() {
     // Replace placeholder path with your actual python script and parameters
     // yoloProcess->start("python", QStringList() << "run_yolo.py" << fileName); 
     
-    // 2. OCR API Placeholder
-    // Replace the URL with the actual OCR API endpoint
-    QUrl ocrUrl("https://api.ocr-service.com/v1/recognize"); 
+    // 2. OCR API using DashScope qwen-vl-ocr
+    QUrl ocrUrl("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"); 
     QNetworkRequest request(ocrUrl);
-    // Replace with your API key / headers
-    request.setRawHeader("Authorization", "Bearer YOUR_API_KEY");
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setRawHeader("Authorization", QByteArray("Bearer ") + OCR_apiKey);
+
+    // 将图片转换为 base64
+    QByteArray imageByteArray;
+    QBuffer buffer(&imageByteArray);
+    buffer.open(QIODevice::WriteOnly);
+    originalPixmap.save(&buffer, "PNG");
+    QString base64Image = QByteArray("data:image/png;base64,") + imageByteArray.toBase64();
+
+    QJsonObject textContentObj;
+    textContentObj["type"] = "text";
+    // 针对文字成块状分布的情况，通过优化提示词（Prompt），要求模型按版式或结构化输出
+    textContentObj["text"] = "请提取图片中的所有文字。由于图片中文字成块状分布，请严格按照图片上的视觉排版和版块结构进行格式化输出（可使用Markdown格式），不同区块的文字请分段给出，保持原有的阅读逻辑。";
     
-    QHttpMultiPart* multiPart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
-    
-    QHttpPart imagePart;
-    imagePart.setHeader(QNetworkRequest::ContentTypeHeader, QVariant("image/png"));
-    imagePart.setHeader(QNetworkRequest::ContentDispositionHeader, QVariant("form-data; name=\"image\"; filename=\"screenshot_temp.png\""));
-    
-    QFile* file = new QFile(fileName);
-    file->open(QIODevice::ReadOnly);
-    imagePart.setBodyDevice(file);
-    file->setParent(multiPart); // we cannot delete the file now, so delete it with the multiPart
-    
-    multiPart->append(imagePart);
-    
-    QNetworkReply* reply = m_networkManager->post(request, multiPart);
-    multiPart->setParent(reply); // delete the multiPart with the reply
+    QJsonObject imageUrlObj;
+    imageUrlObj["url"] = base64Image;
+    QJsonObject imageContentObj;
+    imageContentObj["type"] = "image_url";
+    imageContentObj["image_url"] = imageUrlObj;
+
+    QJsonArray contentArray;
+    contentArray.append(imageContentObj);
+    contentArray.append(textContentObj);
+
+    QJsonObject messageObj;
+    messageObj["role"] = "user";
+    messageObj["content"] = contentArray;
+
+    QJsonArray messagesArray;
+    messagesArray.append(messageObj);
+
+    QJsonObject requestObj;
+    requestObj["model"] = "qwen-vl-ocr"; // 指定 qwen-vl-ocr
+    requestObj["messages"] = messagesArray;
+
+    QJsonDocument doc(requestObj);
+    QByteArray postData = doc.toJson();
+
+    QNetworkReply* reply = m_networkManager->post(request, postData);
     reply->setProperty("fileName", fileName); // store file name to delete it later
 }
 
 void DesktopPet::handleOcrResponse(QNetworkReply* reply) {
     if (reply->error() == QNetworkReply::NoError) {
         QByteArray response = reply->readAll();
-        qDebug() << "OCR result:" << response;
-        // Handle OCR result...
+        QJsonDocument jsonResponse = QJsonDocument::fromJson(response);
+        QJsonObject jsonObj = jsonResponse.object();
+        
+        if (jsonObj.contains("choices")) {
+            QJsonArray choices = jsonObj["choices"].toArray();
+            if (!choices.isEmpty()) {
+                QJsonObject choiceObj = choices[0].toObject();
+                QJsonObject messageObj = choiceObj["message"].toObject();
+                QString content = messageObj["content"].toString();
+                qDebug() << "OCR result content:" << content;
+                // 这里可以把识别结果传递给 AI 对话系统，或做进一步处理
+            }
+        } else {
+            qDebug() << "Unexpected JSON format:" << response;
+        }
     } else {
         qDebug() << "OCR error:" << reply->errorString();
+        qDebug() << "Error detail:" << reply->readAll();
     }
     
-    // Delete the temporary screenshot file
     QString fileName = reply->property("fileName").toString();
     if (!fileName.isEmpty()) {
         QFile::remove(fileName);
