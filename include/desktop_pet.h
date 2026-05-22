@@ -57,7 +57,7 @@ private:
     bool m_isMovedToCorner;
     QNetworkAccessManager* m_networkManager;
     void processScreenshot();
-    void showBubble(const QString& text);
+    void showBubble(const QString& text, const QString& url = QString());
 
 private slots:
     void showMenu(const QPoint& pos);

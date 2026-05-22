@@ -11,7 +11,7 @@ set(CMAKE_AUTORCC ON)
 
 # 查找 Qt6 组件
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
-find_package(Qt6 REQUIRED COMPONENTS Multimedia MultimediaWidgets)
+find_package(Qt6 REQUIRED COMPONENTS Multimedia MultimediaWidgets WebEngineWidgets)
 
 # 查找 OpenCV
 find_package(OpenCV REQUIRED)
@@ -38,6 +38,7 @@ target_link_libraries(${PROJECT_NAME}
     Qt6::Network
     Qt6::Multimedia
     Qt6::MultimediaWidgets
+    Qt6::WebEngineWidgets
     ${OpenCV_LIBS}
 )
 

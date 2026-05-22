@@ -31,6 +31,7 @@
 #include <QBuffer>
 #include <QTextBrowser>
 #include <QPushButton>
+#include <QWebEngineView>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -377,7 +378,7 @@ void DesktopPet::processScreenshot() {
             "Character - Galbrena", "Character - Iuno", "Character - Augusta", "Character - KuchibaChisa",
             "Character - Buling", "Character - Lynae", "Character - Mornye", "Character - Aemeath",
             "Character - LuukHerssen", "Character - Sigrika", "Character - Denia", "Character - Hiyuki",
-            "Character - Lucilla", "Other"
+            "Character - Lucilla", "Character - Roccia", "Other"
         };
         
         for (int i = 0; i < elements; ++i) {
@@ -507,29 +508,54 @@ void DesktopPet::handleResponse(QNetworkReply* reply) {
                 if (reqType == "character_ai") {
                     QString charNamesStr = reply->property("characterNames").toString();
                     QStringList charNames = charNamesStr.split(",");
-                    QString localDataOutput;
+                    QString targetUrl;
                     
-                    // 读取本地文本数据 (假设放置在当前工作区 data/ 目录下，文件名为 角色名.txt)
+                    // 读取本地数据：原本存文本的 TXT 文件，现在视为存放对应网页的 URL
                     for (const QString& name : charNames) {
                         QFile file(QDir::currentPath() + "/data/" + name + ".txt");
                         if (file.exists() && file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                            localDataOutput += "\n【" + name + " - 本地记录】\n" + QString::fromUtf8(file.readAll()) + "\n";
+                            targetUrl = "https://wiki.kurobbs.com/mc/item/" + QString::fromUtf8(file.readAll()).trimmed();
                             file.close();
-                        } else {
-                            localDataOutput += "\n【" + name + "】 暂无本地记录文件 (" + file.fileName() + ")\n";
+                            if (!targetUrl.isEmpty()) {
+                                break; // 提取到第一个合法 URL 即可停止
+                            }
                         }
                     }
                     
-                    QString finalText = QString("============== 角色识别结果 ==============\n[AI 信息]:\n%1\n------------------------------------------\n[本地数据]:%2\n==========================================")
-                                        .arg(content, localDataOutput);
-                                        
-                    qDebug().noquote() << "\n" << finalText << "\n";
-                    showBubble(finalText);
+                    qDebug().noquote() << "\n" << content;
+                    if (!targetUrl.isEmpty()) qDebug().noquote() << "[内置 Web 指向]: " << targetUrl << "\n";
+                    showBubble(content, targetUrl);
                                        
                 } else if (reqType == "ocr") {
-                    QString finalText = QString("============== OCR 识别结果 ==============\n%1\n==========================================").arg(content);
+                    qDebug() << "OCR 识别完毕，准备请求 AI 进行游戏内容分析...";
+                    QString prompt;
+                    if (content.contains("逆境深塔") || content.contains("冥歌海墟") || content.contains("终焉矩阵")) {
+                        prompt = QString("在这张《鸣潮》游戏的截图中，识别到了以下文字：\n%1\n\n请结合《鸣潮》，问一下遇到这种情况，应该怎么进行角色配对（配队）？").arg(content);
+                    } else {
+                        prompt = QString("在这张《鸣潮》游戏的截图中，识别到了以下文字：\n%1\n\n请问这些文字在鸣潮游戏中指的是什么内容？").arg(content);
+                    }
+                    
+                    QNetworkRequest aiReq(QUrl("https://api.deepseek.com/chat/completions"));
+                    aiReq.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+                    aiReq.setRawHeader("Authorization", QString("Bearer %1").arg(chat_apiKey).toUtf8());
+
+                    QJsonObject messageObj;
+                    messageObj["role"] = "user";
+                    messageObj["content"] = prompt;
+
+                    QJsonArray messagesArray;
+                    messagesArray.append(messageObj);
+
+                    QJsonObject requestObj;
+                    requestObj["model"] = "deepseek-v4-flash"; 
+                    requestObj["messages"] = messagesArray;
+
+                    QNetworkReply* aiReply = m_networkManager->post(aiReq, QJsonDocument(requestObj).toJson());
+                    aiReply->setProperty("requestType", "ocr_ai_analysis");
+                } else if (reqType == "ocr_ai_analysis") {
+                    QString finalText = QString("============== AI 场景分析 ==============\n%1\n==========================================").arg(content);
                     qDebug().noquote() << "\n" << finalText << "\n";
-                    showBubble(finalText);
+                    showBubble(content);
                 }
             }
         } else {
@@ -548,7 +574,7 @@ void DesktopPet::handleResponse(QNetworkReply* reply) {
     reply->deleteLater();
 }
 
-void DesktopPet::showBubble(const QString& text) {
+void DesktopPet::showBubble(const QString& text, const QString& url) {
     QWidget* bubble = new QWidget();
     bubble->setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     bubble->setAttribute(Qt::WA_TranslucentBackground);
@@ -558,17 +584,34 @@ void DesktopPet::showBubble(const QString& text) {
     bLayout->setContentsMargins(10, 10, 10, 10);
     
     QWidget* bgWidget = new QWidget(bubble);
-    bgWidget->setStyleSheet("background-color: rgba(255, 255, 255, 230); border-radius: 10px; border: 2px solid #ccc;");
+    // 修改为粉色系背景 (轻浅粉带一点半透) 以及稍微深一点的粉色边框
+    bgWidget->setStyleSheet("background-color: rgba(255, 240, 245, 240); border-radius: 10px; border: 2px solid #ffb6c1;");
     QVBoxLayout* innerLayout = new QVBoxLayout(bgWidget);
     
     QTextBrowser* textBrowser = new QTextBrowser(bgWidget);
     textBrowser->setText(text);
-    textBrowser->setStyleSheet("border: none; background: transparent; color: #333; font-size: 13px;");
-    textBrowser->setMinimumSize(300, 200);
+    // 深色偏粉/红的字体颜色增强阅读体验，背景透明
+    textBrowser->setStyleSheet("border: none; background: transparent; color: #5c3a41; font-size: 13px;");
+    
+    // 如果附带网页则文本框只需要留小一点的高度，如果纯文本则给足高度
+    textBrowser->setMinimumSize(300, url.isEmpty() ? 200 : 120);
+    textBrowser->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+    
+    innerLayout->addWidget(textBrowser);
+
+    // 如果提供了 URL，那么实例化一个内置浏览器渲染网页
+    if (!url.isEmpty()) {
+        QWebEngineView* webView = new QWebEngineView(bgWidget);
+        webView->load(QUrl(url));
+        webView->setMinimumSize(420, 320); // 给内置浏览器合理的初始大小
+        webView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        innerLayout->addWidget(webView);
+    }
     
     QPushButton* closeBtn = new QPushButton("关闭", bgWidget);
-    closeBtn->setStyleSheet("QPushButton { background-color: #e0e0e0; border-radius: 5px; padding: 5px 15px; font-weight: bold; color: #333; } "
-                            "QPushButton:hover { background-color: #d0d0d0; }");
+    // 粉色按钮样式，悬停时加深颜色
+    closeBtn->setStyleSheet("QPushButton { background-color: #ffb6c1; border-radius: 5px; padding: 5px 15px; font-weight: bold; color: #fff; } "
+                            "QPushButton:hover { background-color: #ff91a4; }");
     QObject::connect(closeBtn, &QPushButton::clicked, bubble, &QWidget::close);
     
     innerLayout->addWidget(textBrowser);
