@@ -2,19 +2,28 @@
 #include <QScrollBar>
 #include <QTimer>
 #include <QApplication>
+#include <QNetworkRequest>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+
+const char* chat_apiKey = "sk-3689655a2d864015924989050c091e31";
 
 AIChatDialog::AIChatDialog(QWidget *parent)
     : QDialog(parent) {
     setupUi();
     resize(400, 550);
-    setWindowTitle("AI 助手");
+    setWindowTitle("AI 聊天");
     setStyleSheet("QDialog { background-color: #f5f5f5; }");
+    
+    m_networkManager = new QNetworkAccessManager(this);
+    connect(m_networkManager, &QNetworkAccessManager::finished, this, &AIChatDialog::onNetworkReply);
     
     connect(m_sendButton, &QPushButton::clicked, this, &AIChatDialog::onSendClicked);
     connect(m_inputLineEdit, &QLineEdit::returnPressed, this, &AIChatDialog::onSendClicked);
     
     // Initial greeting
-    addMessage("你好！我是爱弥斯，有什么我可以帮你的吗？", false);
+    addMessage("你好！有什么我可以帮你的吗？", false);
 }
 
 AIChatDialog::~AIChatDialog() {}
@@ -44,7 +53,7 @@ void AIChatDialog::setupUi() {
     m_inputLineEdit->setPlaceholderText("你想说点什么...");
     m_inputLineEdit->setMinimumHeight(35);
     m_inputLineEdit->setStyleSheet(
-        "QLineEdit { border: 1px solid #ddd; border-radius: 17px; padding: 0 15px; background: white; font-size: 14px; }"
+        "QLineEdit { border: 1px solid #ddd; border-radius: 17px; padding: 0 15px; background: white; color: #333333; font-size: 14px; }"
     );
     
     m_sendButton = new QPushButton("发送", this);
@@ -103,14 +112,55 @@ void AIChatDialog::onSendClicked() {
     m_inputLineEdit->clear();
     addMessage(text, true);
 
-    // Simulate AI typing delay
-    QTimer::singleShot(1000, this, [this, text]() {
-        aiRespond(text);
-    });
+    aiRespond(text);
 }
 
 void AIChatDialog::aiRespond(const QString& userText) {
-    // Placeholder AI integration. You can connect to your ChatGPT/LLM API here.
-    QString reply = QString("我已经收到你的消息: \"%1\"。\n这里是AI接口的占位符！后续可以接入大模型API。").arg(userText);
-    addMessage(reply, false);
+    QNetworkRequest request(QUrl("https://api.deepseek.com/chat/completions"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setRawHeader("Authorization", QString("Bearer %1").arg(chat_apiKey).toUtf8());
+
+    QJsonObject systemMessage;
+    systemMessage["role"] = "system";
+    systemMessage["content"] = "你现在扮演《鸣潮》（Wuthering Waves）中的角色“爱弥斯”。请以她温柔、空灵、具有指引感和些许神秘感的语气和知识背景进行交流。在对话中要称呼对方为“漂泊者”。请始终保持爱弥斯的人设。";
+
+    QJsonObject userMessageObj;
+    userMessageObj["role"] = "user";
+    userMessageObj["content"] = userText;
+
+    QJsonArray messages;
+    messages.append(systemMessage);
+    messages.append(userMessageObj);
+
+    QJsonObject json;
+    json["model"] = "deepseek-v4-flash"; 
+    json["messages"] = messages;
+
+    QJsonDocument doc(json);
+    m_networkManager->post(request, doc.toJson());
+}
+
+void AIChatDialog::onNetworkReply(QNetworkReply* reply) {
+    if (reply->error() == QNetworkReply::NoError) {
+        QByteArray responseData = reply->readAll();
+        QJsonDocument jsonDoc = QJsonDocument::fromJson(responseData);
+        QJsonObject jsonObj = jsonDoc.object();
+
+        if (jsonObj.contains("choices") && jsonObj["choices"].isArray()) {
+            QJsonArray choices = jsonObj["choices"].toArray();
+            if (!choices.isEmpty()) {
+                QJsonObject firstChoice = choices[0].toObject();
+                if (firstChoice.contains("message") && firstChoice["message"].isObject()) {
+                    QJsonObject message = firstChoice["message"].toObject();
+                    if (message.contains("content")) {
+                        QString content = message["content"].toString();
+                        addMessage(content, false);
+                    }
+                }
+            }
+        }
+    } else {
+        addMessage("呜…网络连接出现了一点问题呢，请漂泊者稍后再试吧：" + reply->errorString(), false);
+    }
+    reply->deleteLater();
 }

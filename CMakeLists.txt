@@ -13,6 +13,9 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
 find_package(Qt6 REQUIRED COMPONENTS Multimedia MultimediaWidgets)
 
+# 查找 OpenCV
+find_package(OpenCV REQUIRED)
+
 # 添加可执行文件
 add_executable(${PROJECT_NAME}
     src/main.cpp
@@ -35,6 +38,7 @@ target_link_libraries(${PROJECT_NAME}
     Qt6::Network
     Qt6::Multimedia
     Qt6::MultimediaWidgets
+    ${OpenCV_LIBS}
 )
 
 # 设置目标属性

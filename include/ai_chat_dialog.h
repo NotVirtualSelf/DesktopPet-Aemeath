@@ -9,6 +9,8 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QWidget>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 
 class AIChatDialog : public QDialog {
     Q_OBJECT
@@ -20,6 +22,7 @@ public:
 private slots:
     void onSendClicked();
     void aiRespond(const QString& userText);
+    void onNetworkReply(QNetworkReply* reply);
 
 private:
     void addMessage(const QString& text, bool isUser);
@@ -31,6 +34,8 @@ private:
     
     QLineEdit* m_inputLineEdit;
     QPushButton* m_sendButton;
+    
+    QNetworkAccessManager* m_networkManager;
 };
 
 #endif // AI_CHAT_DIALOG_H

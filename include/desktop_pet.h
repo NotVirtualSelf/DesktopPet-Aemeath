@@ -57,6 +57,7 @@ private:
     bool m_isMovedToCorner;
     QNetworkAccessManager* m_networkManager;
     void processScreenshot();
+    void showBubble(const QString& text);
 
 private slots:
     void showMenu(const QPoint& pos);
@@ -67,7 +68,7 @@ private slots:
     void cancelClock(int rank);
     void clockTimeout();
     void checkProcessStatus();
-    void handleOcrResponse(QNetworkReply* reply);
+    void handleResponse(QNetworkReply* reply);
 };
 
 #endif
