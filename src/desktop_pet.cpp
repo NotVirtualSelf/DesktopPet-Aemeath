@@ -13,7 +13,7 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/dnn.hpp>
 
-#include "settings_menu.h"
+#include "settings_menu.h"  
 
 #include <QJsonDocument>
 #include <QJsonParseError>
@@ -31,7 +31,7 @@
 #include <QBuffer>
 #include <QTextBrowser>
 #include <QPushButton>
-#include <QWebEngineView>
+#include "native_web_view.h"
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -40,14 +40,17 @@
 constexpr int WINDOW_WIDTH = 260;
 constexpr int WINDOW_HEIGHT = 227;
 
-const char* OCR_apiKey = "sk-5d5608f668ad455bb1d2d1f32c9a51c5";
-const char* chat_apiKey = "sk-3689655a2d864015924989050c091e31";
+constexpr const char* OCR_apiKey = "sk-5d5608f668ad455bb1d2d1f32c9a51c5";
+constexpr const char* chat_apiKey = "sk-3689655a2d864015924989050c091e31";
 
 DesktopPet::DesktopPet(QWidget* parent)
     : QWidget(parent),
     m_Scale(1.0), m_dragPosition(QPoint(0, 0)), m_isDragging(false),
     m_Food(0), m_musicPlayer(nullptr), m_chatDialog(nullptr),
-    m_targetProcessRunning(false), m_isMovedToCorner(false), m_originalPosition(QPoint())
+    m_targetProcessRunning(false), m_isMovedToCorner(false), m_originalPosition(QPoint()),
+    m_activeBubble(nullptr), m_activeBubbleText(nullptr), m_activeBubbleInnerLayout(nullptr),
+    m_activeBubbleContent(nullptr),
+    m_activeBubbleHasWebView(false)
 {
     this->setWindowTitle("Aemeath");
     this->setWindowIcon(QIcon(":/images/icon.png"));
@@ -85,10 +88,9 @@ DesktopPet::DesktopPet(QWidget* parent)
     connect(m_clockMenu, &ClockMenu::addClock, this, &DesktopPet::addClock);
     connect(m_clockMenu, QOverload<int>::of(&ClockMenu::cancelClock), this, &DesktopPet::cancelClock);
 
-    // Initialize process monitor
     m_processMonitorTimer = new QTimer(this);
     connect(m_processMonitorTimer, &QTimer::timeout, this, &DesktopPet::checkProcessStatus);
-    m_processMonitorTimer->start(5000); // Check every 5 seconds
+    m_processMonitorTimer->start(3000);
 
     m_networkManager = new QNetworkAccessManager(this);
     connect(m_networkManager, &QNetworkAccessManager::finished, this, &DesktopPet::handleResponse);
@@ -297,6 +299,7 @@ void DesktopPet::dance() {
 
 void DesktopPet::mouseDoubleClickEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton && m_targetProcessRunning) {
+        this->showLoadingBubble();
         this->processScreenshot();
     }
     QWidget::mouseDoubleClickEvent(event);
@@ -305,10 +308,10 @@ void DesktopPet::mouseDoubleClickEvent(QMouseEvent* event) {
 void DesktopPet::checkProcessStatus() {
 #ifdef Q_OS_WIN
     QProcess process;
-    process.start("tasklist", QStringList() << "/FI" << "IMAGENAME eq target_game.exe"); // Replace target_game.exe with your target process
+    process.start("tasklist", QStringList() << "/FI" << "IMAGENAME eq Wuthering Waves.exe"); // Replace target_game.exe with your target process
     process.waitForFinished();
     QString output(process.readAllStandardOutput());
-    bool isRunning = output.contains("target_game.exe", Qt::CaseInsensitive);
+    bool isRunning = output.contains("Wuthering Waves.exe", Qt::CaseInsensitive);
     
     if (isRunning && !m_isMovedToCorner) {
         m_originalPosition = this->pos();
@@ -334,7 +337,7 @@ void DesktopPet::processScreenshot() {
     
     WId windowId = 0;
 #ifdef Q_OS_WIN
-    HWND hwnd = FindWindowW(nullptr, L"Target Game Window Title");
+    HWND hwnd = FindWindowW(nullptr, L"Wuthering Waves");
     if (hwnd) {
         windowId = reinterpret_cast<WId>(hwnd);
     }
@@ -529,8 +532,8 @@ void DesktopPet::handleResponse(QNetworkReply* reply) {
                 } else if (reqType == "ocr") {
                     qDebug() << "OCR 识别完毕，准备请求 AI 进行游戏内容分析...";
                     QString prompt;
-                    if (content.contains("逆境深塔") || content.contains("冥歌海墟") || content.contains("终焉矩阵")) {
-                        prompt = QString("在这张《鸣潮》游戏的截图中，识别到了以下文字：\n%1\n\n请结合《鸣潮》，问一下遇到这种情况，应该怎么进行角色配对（配队）？").arg(content);
+                    if (content.contains("深塔") || content.contains("海墟") || content.contains("海域") || content.contains("湍渊") || content.contains("矩阵")) {
+                        prompt = QString("在这张《鸣潮》游戏的截图中，识别到了以下文字：\n%1\n\n请结合《鸣潮》，问一下遇到这种情况，应该怎么进行角色配队？").arg(content);
                     } else {
                         prompt = QString("在这张《鸣潮》游戏的截图中，识别到了以下文字：\n%1\n\n请问这些文字在鸣潮游戏中指的是什么内容？").arg(content);
                     }
@@ -574,62 +577,152 @@ void DesktopPet::handleResponse(QNetworkReply* reply) {
     reply->deleteLater();
 }
 
-void DesktopPet::showBubble(const QString& text, const QString& url) {
+void DesktopPet::showLoadingBubble() {
+    if (m_activeBubble) {
+        m_activeBubble->close();
+        m_activeBubble = nullptr;
+        m_activeBubbleText = nullptr;
+        m_activeBubbleInnerLayout = nullptr;
+        m_activeBubbleContent = nullptr;
+        m_activeBubbleHasWebView = false;
+    }
+
     QWidget* bubble = new QWidget();
     bubble->setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     bubble->setAttribute(Qt::WA_TranslucentBackground);
     bubble->setAttribute(Qt::WA_DeleteOnClose);
-    
+
+    connect(bubble, &QObject::destroyed, this, [this]() {
+        m_activeBubble = nullptr;
+        m_activeBubbleText = nullptr;
+        m_activeBubbleInnerLayout = nullptr;
+        m_activeBubbleContent = nullptr;
+        m_activeBubbleHasWebView = false;
+    });
+
     QVBoxLayout* bLayout = new QVBoxLayout(bubble);
     bLayout->setContentsMargins(10, 10, 10, 10);
-    
+
     QWidget* bgWidget = new QWidget(bubble);
-    // 修改为粉色系背景 (轻浅粉带一点半透) 以及稍微深一点的粉色边框
     bgWidget->setStyleSheet("background-color: rgba(255, 240, 245, 240); border-radius: 10px; border: 2px solid #ffb6c1;");
     QVBoxLayout* innerLayout = new QVBoxLayout(bgWidget);
-    
+
     QTextBrowser* textBrowser = new QTextBrowser(bgWidget);
-    textBrowser->setText(text);
-    // 深色偏粉/红的字体颜色增强阅读体验，背景透明
+    textBrowser->setMarkdown(QString());
     textBrowser->setStyleSheet("border: none; background: transparent; color: #5c3a41; font-size: 13px;");
-    
-    // 如果附带网页则文本框只需要留小一点的高度，如果纯文本则给足高度
-    textBrowser->setMinimumSize(300, url.isEmpty() ? 200 : 120);
+    textBrowser->setMinimumSize(300, 200);
     textBrowser->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
-    
+
     innerLayout->addWidget(textBrowser);
 
-    // 如果提供了 URL，那么实例化一个内置浏览器渲染网页
-    if (!url.isEmpty()) {
-        QWebEngineView* webView = new QWebEngineView(bgWidget);
-        webView->load(QUrl(url));
-        webView->setMinimumSize(420, 320); // 给内置浏览器合理的初始大小
-        webView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-        innerLayout->addWidget(webView);
-    }
-    
     QPushButton* closeBtn = new QPushButton("关闭", bgWidget);
-    // 粉色按钮样式，悬停时加深颜色
     closeBtn->setStyleSheet("QPushButton { background-color: #ffb6c1; border-radius: 5px; padding: 5px 15px; font-weight: bold; color: #fff; } "
                             "QPushButton:hover { background-color: #ff91a4; }");
     QObject::connect(closeBtn, &QPushButton::clicked, bubble, &QWidget::close);
-    
-    innerLayout->addWidget(textBrowser);
+
     innerLayout->addWidget(closeBtn, 0, Qt::AlignRight);
-    
     bLayout->addWidget(bgWidget);
-    
-    // 自适应大小并移动到桌宠左侧
+
     bubble->adjustSize();
     QRect petRect = this->geometry();
     int bubbleX = petRect.left() - bubble->width() - 10;
     int bubbleY = petRect.top();
-    
-    // 轻微防越界处理 (如果在屏幕最左边，可能需要显示在右边)
     if (bubbleX < 0) {
         bubbleX = petRect.right() + 10;
     }
-    
     bubble->move(bubbleX, bubbleY);
     bubble->show();
+
+    m_activeBubble = bubble;
+    m_activeBubbleText = textBrowser;
+    m_activeBubbleInnerLayout = innerLayout;
+    m_activeBubbleContent = bgWidget;
+    m_activeBubbleHasWebView = false;
+}
+
+void DesktopPet::showBubble(const QString& text, const QString& url) {
+    // 【核心修复】：如果有网页，而现有的气泡是全透明的加载气泡，必须把它彻底关闭并清理，以便重新创建非分层窗口
+    if (!url.isEmpty() && m_activeBubble && !m_activeBubbleHasWebView) {
+        m_activeBubble->close(); 
+        m_activeBubble = nullptr;
+        m_activeBubbleText = nullptr;
+        m_activeBubbleInnerLayout = nullptr;
+        m_activeBubbleContent = nullptr;
+    }
+
+    // 如果气泡不存在（被上面释放了，或者原本就没弹出），则重新创建整个气泡结构
+    if (!m_activeBubble || !m_activeBubbleText || !m_activeBubbleInnerLayout || !m_activeBubbleContent) {
+        QWidget* bubble = new QWidget();
+        
+        // 【关键改动】：必须在首次调用 show() 之前，把窗口属性彻底定死！
+        if (url.isEmpty()) {
+            bubble->setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+            bubble->setAttribute(Qt::WA_TranslucentBackground); // 纯文本无网页：允许全透明
+        } else {
+            bubble->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+            bubble->setAttribute(Qt::WA_TranslucentBackground, false); // 带网页：必须严格关闭全透明
+            bubble->setStyleSheet("background-color: rgb(255, 240, 245);"); // 铺满底色防止穿透
+        }
+        bubble->setAttribute(Qt::WA_DeleteOnClose);
+
+        connect(bubble, &QObject::destroyed, this, [this]() {
+            m_activeBubble = nullptr;
+            m_activeBubbleText = nullptr;
+            m_activeBubbleInnerLayout = nullptr;
+            m_activeBubbleContent = nullptr;
+            m_activeBubbleHasWebView = false;
+        });
+
+        QVBoxLayout* bLayout = new QVBoxLayout(bubble);
+        bLayout->setContentsMargins(10, 10, 10, 10);
+
+        QWidget* bgWidget = new QWidget(bubble);
+        bgWidget->setStyleSheet("background-color: rgba(255, 240, 245, 240); border-radius: 10px; border: 2px solid #ffb6c1;");
+        QVBoxLayout* innerLayout = new QVBoxLayout(bgWidget);
+
+        QTextBrowser* textBrowser = new QTextBrowser(bgWidget);
+        textBrowser->setStyleSheet("border: none; background: transparent; color: #5c3a41; font-size: 13px;");
+        textBrowser->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+
+        innerLayout->addWidget(textBrowser);
+
+        QPushButton* closeBtn = new QPushButton("关闭", bgWidget);
+        closeBtn->setStyleSheet("QPushButton { background-color: #ffb6c1; border-radius: 5px; padding: 5px 15px; font-weight: bold; color: #fff; } "
+                                "QPushButton:hover { background-color: #ff91a4; }");
+        QObject::connect(closeBtn, &QPushButton::clicked, bubble, &QWidget::close);
+
+        innerLayout->addWidget(closeBtn, 0, Qt::AlignRight);
+        bLayout->addWidget(bgWidget);
+
+        m_activeBubble = bubble;
+        m_activeBubbleText = textBrowser;
+        m_activeBubbleInnerLayout = innerLayout;
+        m_activeBubbleContent = bgWidget;
+        m_activeBubbleHasWebView = false;
+    }
+
+    // 此时 m_activeBubble 已经是处于正确兼容模式的窗口了，开始填入内容
+    m_activeBubbleText->setMarkdown(text);
+    m_activeBubbleText->setMinimumSize(300, url.isEmpty() ? 200 : 120);
+
+    // 动态挂载浏览器组件
+    if (!url.isEmpty() && !m_activeBubbleHasWebView) {
+        NativeWebView* webView = new NativeWebView(url, m_activeBubbleContent);
+        webView->setMinimumSize(420, 320);
+        webView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        m_activeBubbleInnerLayout->insertWidget(1, webView); // 塞到文本和关闭按钮中间
+
+        m_activeBubbleHasWebView = true;
+    }
+
+    // 调整尺寸并显示
+    m_activeBubble->adjustSize();
+    QRect petRect = this->geometry();
+    int bubbleX = petRect.left() - m_activeBubble->width() - 10;
+    int bubbleY = petRect.top();
+    if (bubbleX < 0) {
+        bubbleX = petRect.right() + 10;
+    }
+    m_activeBubble->move(bubbleX, bubbleY);
+    m_activeBubble->show(); // 此时触发 NativeWebView 的 showEvent，由于父窗口非分层，HWND 将完美渲染
 }

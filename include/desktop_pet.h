@@ -13,6 +13,9 @@
 #include "clock_menu.h"
 #include "ai_chat_dialog.h"
 
+class QTextBrowser;
+class QVBoxLayout;
+
 class DesktopPet : public QWidget {
     Q_OBJECT
 
@@ -56,7 +59,13 @@ private:
     QPoint m_originalPosition;
     bool m_isMovedToCorner;
     QNetworkAccessManager* m_networkManager;
+    QWidget* m_activeBubble;
+    QTextBrowser* m_activeBubbleText;
+    QVBoxLayout* m_activeBubbleInnerLayout;
+    QWidget* m_activeBubbleContent;
+    bool m_activeBubbleHasWebView;
     void processScreenshot();
+    void showLoadingBubble();
     void showBubble(const QString& text, const QString& url = QString());
 
 private slots:
