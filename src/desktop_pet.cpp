@@ -40,8 +40,8 @@
 constexpr int WINDOW_WIDTH = 260;
 constexpr int WINDOW_HEIGHT = 227;
 
-constexpr const char* OCR_apiKey = "sk-5d5608f668ad455bb1d2d1f32c9a51c5";
-constexpr const char* chat_apiKey = "sk-3689655a2d864015924989050c091e31";
+constexpr const char* OCR_apiKey = "";
+constexpr const char* chat_apiKey = "";
 
 DesktopPet::DesktopPet(QWidget* parent)
     : QWidget(parent),
