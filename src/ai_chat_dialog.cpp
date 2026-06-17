@@ -7,7 +7,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 
-constexpr const char* chat_apiKey = "sk-3689655a2d864015924989050c091e31";
+constexpr const char* chat_apiKey = "";
 
 AIChatDialog::AIChatDialog(QWidget *parent)
     : QDialog(parent) {
